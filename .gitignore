@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.venv/
+
+# Books and conversion output
+*.pdf
+*.epub
+
+# Optional epubcheck download (see README)
+epubcheck/
+
+.DS_Store
+Thumbs.db

@@ -1,0 +1,20 @@
+/* Styles for technical books (Marker + Pandoc path). Kept simple for e-ink. */
+body { line-height: 1.45; }
+h1, h2, h3 { page-break-after: avoid; }
+
+pre, code { font-family: monospace; font-size: 0.85em; }
+pre {
+  white-space: pre-wrap;      /* wrap long lines instead of cutting them off */
+  word-wrap: break-word;
+  border-left: 3px solid #888;
+  padding: 0.4em 0.6em;
+  margin: 0.8em 0;
+  page-break-inside: avoid;
+}
+
+table { border-collapse: collapse; margin: 0.8em 0; font-size: 0.85em; }
+th, td { border: 1px solid #888; padding: 0.2em 0.4em; vertical-align: top; }
+th { font-weight: bold; }
+
+img { max-width: 100%; height: auto; }
+math[display="block"] { display: block; margin: 0.6em 0; }

@@ -1,0 +1,3 @@
+# Keep LF so the macOS launcher and Python shebang work; .bat needs CRLF.
+* text=auto eol=lf
+*.bat text eol=crlf
