@@ -10,6 +10,7 @@ Prose books go through Calibre; technical books (tables, math, code) go
 through Marker + Pandoc. Everything runs locally on Windows and macOS.
 """
 
+import json
 import os
 import re
 import shutil
@@ -18,6 +19,7 @@ import sys
 import sysconfig
 import tempfile
 from pathlib import Path
+from urllib.parse import unquote
 
 HERE = Path(__file__).resolve().parent
 IS_WIN = sys.platform == "win32"
@@ -269,13 +271,55 @@ def build_technical_epub(pdf, md, out, tools):
     text = re.sub(r'<math display="block">(.*?)</math>', r"$$\1$$", text, flags=re.S)
     text = re.sub(r"<math[^>]*>(.*?)</math>", r"$\1$", text, flags=re.S)
     md.write_text(text, encoding="utf-8")
+    # The markdown comes from the PDF's text, so it is untrusted: Pandoc embeds any file an
+    # image points to. Parse it to Pandoc's AST, keep only images Marker extracted, then
+    # write the EPUB. YAML metadata blocks are off so the text can't set cover-image or css.
+    ast = json.loads(run([tools["pandoc"], str(md), "-f", "markdown-yaml_metadata_block",
+                          "-t", "json"], "Pandoc").stdout)
+    ast["blocks"] = sanitize(ast["blocks"], md.parent.resolve())
+    ast_file = md.with_suffix(".json")
+    ast_file.write_text(json.dumps(ast), encoding="utf-8")
     run([
-        tools["pandoc"], str(md), "-f", "markdown", "-o", str(out),
+        tools["pandoc"], str(ast_file), "-f", "json", "-o", str(out),
         "--mathml", "--toc",
         "--css", str(HERE / "technical.css"),
         "--resource-path", str(md.parent),
         "--metadata", f"title={pdf.stem}",
     ], "Pandoc")
+
+
+# Raw HTML Marker itself emits (page anchors, sub/superscripts, line breaks in tables).
+SAFE_HTML_TAG = re.compile(r'</?(span|sup|sub|br|b|i|em|strong|u)(\s+id="[^"<>]*")?\s*/?>', re.I)
+
+
+def safe_image(url, root):
+    """True if url names a file inside root, i.e. an image Marker extracted."""
+    url = unquote(url)
+    if re.match(r"[a-z][a-z0-9+.-]*:|[/\\]", url, re.I):  # http:, file:, data:, C:, /abs
+        return False
+    path = (root / url).resolve()
+    return path.is_relative_to(root) and path.is_file()
+
+
+def sanitize(node, root):
+    """Drop images outside root and raw HTML other than SAFE_HTML_TAG from a Pandoc AST."""
+    if isinstance(node, list):
+        return [sanitize(n, root) for n in node]
+    if not isinstance(node, dict):
+        return node
+    kind = node.get("t")
+    if kind == "Image":
+        attr, alt, (url, _title) = node["c"]
+        if not safe_image(url, root):
+            return {"t": "Span", "c": [["", [], []], sanitize(alt, root)]}
+    elif kind in ("RawInline", "RawBlock"):
+        fmt, text = node["c"]
+        tags = re.findall(r"<[^>]*>", text)
+        safe = fmt == "html" and tags and not re.sub(r"<[^>]*>", "", text).strip() \
+            and all(SAFE_HTML_TAG.fullmatch(t) for t in tags)
+        if not safe:
+            return {"t": "Str", "c": ""} if kind == "RawInline" else {"t": "Plain", "c": []}
+    return {k: sanitize(v, root) for k, v in node.items()}
 
 
 def validate(out, epubcheck):
