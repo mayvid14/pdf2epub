@@ -17,33 +17,40 @@ You need Python 3.10 or newer. Install only what you need.
 
 ### Installing Marker
 
-Marker needs Python 3.10–3.13; it does not install on 3.14 yet. It also pulls in PyTorch, which is several GB. To
-keep it out of your main Python, install it into its own `.venv-marker` folder inside `pdf2epub`, where the app
-finds it automatically. Run these commands inside the `pdf2epub` folder.
+**The easy way:** convert a technical book and answer **y** to *"Marker is not set up. Set it up now?"*. pdf2epub
+creates a `.venv-marker` folder next to `pdf2epub.py` and installs Marker into it.
 
-Use Marker 1.x (`marker-pdf<2`). Marker 2.0 needs Docker or a separate llama.cpp server to run its models, while
-1.x runs them directly in Python.
+Marker needs Python 3.10–3.13; it does not install on 3.14 yet. If you have neither, install Python 3.12 first with
+`winget install Python.Python.3.12` (Windows) or `brew install python@3.12` (macOS). Marker also pulls in PyTorch,
+which is several GB; keeping it in its own folder keeps it out of your main Python. pdf2epub always uses this copy
+of Marker, even if another one is installed elsewhere.
 
-Windows (PowerShell):
+pdf2epub installs Marker 1.x (`marker-pdf<2`). Marker 2.0 needs Docker or a separate llama.cpp server to run its
+models, while 1.x runs them directly in Python.
+
+To set it up by hand instead, run these one at a time inside the `pdf2epub` folder.
+
+Windows (PowerShell or Command Prompt):
 
 ```
-py install 3.12
-py -V:3.12 -m venv .venv-marker
-.venv-marker\Scripts\pip install "marker-pdf<2"
+py -3.12 -m venv .venv-marker
+.venv-marker\Scripts\python -m pip install "marker-pdf<2"
 ```
 
 macOS:
 
 ```
 python3.12 -m venv .venv-marker
-.venv-marker/bin/pip install 'marker-pdf<2'
+.venv-marker/bin/python -m pip install 'marker-pdf<2'
 ```
 
-> **Technical conversions are slow.** Marker runs AI models on your computer. On the CPU, which is the default on
-> Windows, a long book can take **an hour or more**, and pdf2epub shows no progress while Marker runs; leave the
-> window open. The first run also downloads about 3 GB of models. Prose books through Calibre take seconds.
-
-Marker uses Apple Silicon automatically. On Windows, the default PyTorch runs on the CPU only.
+> **Technical conversions are slow.** Marker runs AI models on your computer. On Windows, the standard setup runs on
+> the CPU, even if you have an NVIDIA GPU. A long book can take **an hour or more** (a 110-page programming book took
+> about an hour on a 14th-gen Core i7), and pdf2epub shows no progress while Marker runs, so leave the window open.
+> The first run also downloads about 3 GB of models. On a Mac, Marker uses the Apple Silicon GPU when it can.
+> Prose books through Calibre take seconds.
+>
+> When you convert a folder, Marker processes all the books in one run, so it loads its models only once.
 
 On macOS, run `chmod +x pdf2epub.command` once so you can double-click the launcher.
 

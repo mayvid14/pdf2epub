@@ -23,6 +23,13 @@ HERE = Path(__file__).resolve().parent
 IS_WIN = sys.platform == "win32"
 IS_MAC = sys.platform == "darwin"
 
+# Marker lives in its own venv next to this script (see README).
+MARKER_VENV = HERE / ".venv-marker"
+MARKER_BIN = MARKER_VENV / ("Scripts" if IS_WIN else "bin")
+# Marker 1.x needs Python 3.10-3.13 (it pins pillow<11); 2.x needs Docker or llama.cpp.
+MARKER_PYTHONS = ("3.12", "3.13", "3.11", "3.10")
+MARKER_PACKAGE = "marker-pdf<2"
+
 # Default install locations, used when a tool is not on PATH.
 FALLBACKS = {
     "ebook-convert": [
@@ -42,12 +49,7 @@ FALLBACKS = {
 INSTALL_HINTS = {
     "ebook-convert": ("winget install calibre.calibre", "brew install --cask calibre"),
     "pandoc": ("winget install JohnMacFarlane.Pandoc", "brew install pandoc"),
-    "marker_single": (
-        "py install 3.12; py -V:3.12 -m venv .venv-marker; "
-        ".venv-marker\\Scripts\\pip install \"marker-pdf<2\"   (run in the pdf2epub folder)",
-        "python3.12 -m venv .venv-marker && .venv-marker/bin/pip install 'marker-pdf<2'"
-        "   (run in the pdf2epub folder)",
-    ),
+    "marker_single": ('run pdf2epub again and answer y to "Set up Marker now?"',) * 2,
 }
 
 # Calibre treats short paragraphs like "Chapter 3", "PART ONE" or the spaced-out
@@ -57,8 +59,9 @@ CHAPTER_XPATH = (
     "re:test(., '^\\s*(c\\s?h\\s?a\\s?p\\s?t\\s?e\\s?r|part|book|prologue|epilogue)\\b', 'i')]"
 )
 # A paragraph that contains nothing but a page number ("12", "Page 12", "12 of 300").
+# Bare numbers are capped at 3 digits so a year on its own line ("1965") survives.
 PAGE_NUMBER_REGEX = (
-    r"(?i)<p[^>]*>\s*(?:<[^>]+>\s*)*(?:page\s+)?\d{1,4}(?:\s+of\s+\d{1,4})?"
+    r"(?i)<p[^>]*>\s*(?:<[^>]+>\s*)*(?:\d{1,3}|page\s+\d{1,4}|\d{1,4}\s+of\s+\d{1,4})"
     r"\s*(?:</[^>]+>\s*)*</p>"
 )
 
@@ -108,13 +111,15 @@ def clean_path(text):
 # --- tools ----------------------------------------------------------------
 
 def find_tool(name):
+    exe = name + (".exe" if IS_WIN else "")
+    # Marker's venv comes first so an older global install (e.g. Marker 2.x) can't shadow it.
+    local = MARKER_BIN / exe
+    if local.is_file():
+        return str(local)
     found = shutil.which(name)
     if found:
         return found
     candidates = list(FALLBACKS.get(name, []))
-    exe = name + (".exe" if IS_WIN else "")
-    # Marker's own venv next to this script (see README), then this Python's scripts.
-    candidates.append(str(HERE / ".venv-marker" / ("Scripts" if IS_WIN else "bin") / exe))
     scripts = sysconfig.get_path("scripts")
     if scripts:
         candidates.append(os.path.join(scripts, exe))
@@ -133,14 +138,49 @@ def find_epubcheck():
     return None
 
 
+def find_marker_python():
+    """Return a command that runs a Python Marker can install on, or None."""
+    if (3, 10) <= sys.version_info[:2] <= (3, 13):
+        return [sys.executable]
+    for version in MARKER_PYTHONS:
+        cmd = ["py", f"-{version}"] if IS_WIN else [f"python{version}"]
+        if shutil.which(cmd[0]) and subprocess.run(
+                cmd + ["--version"], capture_output=True).returncode == 0:
+            return cmd
+    return None
+
+
+def setup_marker():
+    """Create Marker's venv next to this script and install Marker into it."""
+    python = find_marker_python()
+    if not python:
+        print("Marker needs Python 3.10-3.13. Install Python 3.12, then run pdf2epub again:")
+        print("  " + ("winget install Python.Python.3.12" if IS_WIN else "brew install python@3.12"))
+        return False
+    try:
+        print(f"  Creating {MARKER_VENV} ...")
+        run(python + ["-m", "venv", str(MARKER_VENV)], "Creating the Marker environment")
+        print("  Installing Marker (several GB; this can take 10+ minutes)...")
+        run([str(MARKER_BIN / ("python.exe" if IS_WIN else "python")),
+             "-m", "pip", "install", MARKER_PACKAGE], "Installing Marker")
+    except ConversionError as e:
+        print(f"  {e}")
+        return False
+    return True
+
+
 def require(names):
     paths = {name: find_tool(name) for name in names}
+    if "marker_single" in names and not paths["marker_single"] and \
+            ask_yn("Marker is not set up. Set it up now (downloads several GB)?", False) and \
+            setup_marker():
+        paths["marker_single"] = find_tool("marker_single")
     missing = [name for name, path in paths.items() if not path]
     if missing:
         print("\nSome required tools are missing. Install them with:")
         for name in missing:
-            win, mac = INSTALL_HINTS[name]
-            print(f"  {name:14} {mac if IS_MAC else win}")
+            hints = INSTALL_HINTS[name]
+            print(f"  {name:14} {hints[1] if IS_MAC else hints[0]}")
         print("Then open a new terminal and run pdf2epub again.")
         sys.exit(1)
     return paths
@@ -153,6 +193,31 @@ def run(cmd, what):
         tail = (result.stderr or result.stdout).strip().splitlines()[-5:]
         raise ConversionError(f"{what} failed:\n    " + "\n    ".join(tail))
     return result
+
+
+def marker_models_cached():
+    """True if Marker's models are already downloaded (platformdirs cache for "datalab")."""
+    if IS_WIN:
+        cache = Path(os.environ.get("LOCALAPPDATA", "")) / "datalab" / "datalab" / "Cache"
+    elif IS_MAC:
+        cache = Path.home() / "Library" / "Caches" / "datalab"
+    else:
+        cache = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "datalab"
+    models = cache / "models"
+    return models.is_dir() and any(models.iterdir())
+
+
+def technical_warning():
+    lines = ["  Note: technical books are converted by AI models running on this computer."]
+    if IS_MAC:
+        lines.append("  Marker uses the Apple Silicon GPU when it can, but a long book can still")
+        lines.append("  take a long time, with no progress shown.")
+    else:
+        lines.append("  The standard Marker setup runs on the CPU (even if you have a GPU), so a")
+        lines.append("  long book can take an hour or more, with no progress shown.")
+    if not marker_models_cached():
+        lines.append("  This first run also downloads about 3 GB of models.")
+    print("\n".join(lines))
 
 
 # --- converters -----------------------------------------------------------
@@ -174,26 +239,43 @@ def convert_prose(pdf, out, tools, strip_page_numbers):
     run(cmd, "Calibre")
 
 
-def convert_technical(pdf, out, tools):
-    with tempfile.TemporaryDirectory(prefix="pdf2epub-") as tmp:
-        print("  Running Marker; this can take a long time. Leave this window open...")
-        run([tools["marker_single"], str(pdf), "--output_dir", tmp], "Marker")
-        markdown = sorted(Path(tmp).rglob("*.md"))
-        if not markdown:
-            raise ConversionError("Marker produced no output.")
-        md = markdown[0]
-        # Newer Marker versions emit <math> tags; Pandoc wants $...$ to build MathML.
-        text = md.read_text(encoding="utf-8")
-        text = re.sub(r'<math display="block">(.*?)</math>', r"$$\1$$", text, flags=re.S)
-        text = re.sub(r"<math[^>]*>(.*?)</math>", r"$\1$", text, flags=re.S)
-        md.write_text(text, encoding="utf-8")
-        run([
-            tools["pandoc"], str(md), "-f", "markdown", "-o", str(out),
-            "--mathml", "--toc",
-            "--css", str(HERE / "technical.css"),
-            "--resource-path", str(md.parent),
-            "--metadata", f"title={pdf.stem}",
-        ], "Pandoc")
+def run_marker(pdfs, tools, tmp):
+    """Run Marker on all PDFs; return {pdf: markdown path or None}."""
+    out_dir = Path(tmp) / "marker"
+    batch = tools.get("marker") if len(pdfs) > 1 else None
+    print(f"Running Marker on {len(pdfs)} book(s); this can take a long time. "
+          "Leave this window open...")
+    try:
+        if batch:
+            # One process for the whole batch, so the models are loaded only once.
+            in_dir = Path(tmp) / "in"
+            in_dir.mkdir()
+            for pdf in pdfs:
+                shutil.copy2(pdf, in_dir / pdf.name)
+            run([batch, str(in_dir), "--output_dir", str(out_dir), "--workers", "1"], "Marker")
+        else:
+            for pdf in pdfs:
+                run([tools["marker_single"], str(pdf), "--output_dir", str(out_dir)], "Marker")
+    except ConversionError as e:
+        print(f"  {e}")  # books Marker finished before the error are still converted
+    return {pdf: next(iter(sorted((out_dir / pdf.stem).rglob("*.md"))), None) for pdf in pdfs}
+
+
+def build_technical_epub(pdf, md, out, tools):
+    if md is None:
+        raise ConversionError("Marker produced no output.")
+    # Newer Marker versions emit <math> tags; Pandoc wants $...$ to build MathML.
+    text = md.read_text(encoding="utf-8")
+    text = re.sub(r'<math display="block">(.*?)</math>', r"$$\1$$", text, flags=re.S)
+    text = re.sub(r"<math[^>]*>(.*?)</math>", r"$\1$", text, flags=re.S)
+    md.write_text(text, encoding="utf-8")
+    run([
+        tools["pandoc"], str(md), "-f", "markdown", "-o", str(out),
+        "--mathml", "--toc",
+        "--css", str(HERE / "technical.css"),
+        "--resource-path", str(md.parent),
+        "--metadata", f"title={pdf.stem}",
+    ], "Pandoc")
 
 
 def validate(out, epubcheck):
@@ -250,9 +332,8 @@ def convert_batch(source):
                        False)
     tools = require(["marker_single", "pandoc"] if technical else ["ebook-convert"])
     if technical:
-        print("  Note: technical books are converted by AI models running on this computer.\n"
-              "  Without a supported GPU this is slow: a long book can take an hour or more,\n"
-              "  with no progress shown. The first run also downloads about 3 GB of models.")
+        tools["marker"] = find_tool("marker")
+        technical_warning()
     strip_page_numbers = False if technical else ask_yn("Remove stray page numbers?", True)
     outputs = choose_outputs(pdfs, single)
 
@@ -270,21 +351,23 @@ def convert_batch(source):
     check = bool(epubcheck) and ask_yn("Validate the result with epubcheck?", True)
 
     failed = []
-    for i, (pdf, out) in enumerate(outputs.items(), 1):
-        counter = "" if single else f"[{i}/{len(outputs)}] "
-        print(f"{counter}Converting {pdf.name}...")
-        try:
-            if technical:
-                convert_technical(pdf, out, tools)
-            else:
-                convert_prose(pdf, out, tools, strip_page_numbers)
-        except ConversionError as e:
-            failed.append(pdf)
-            print(f"  {e}")
-            continue
-        print(f"  done -> {out}")
-        if check:
-            print(f"  {validate(out, epubcheck)}")
+    with tempfile.TemporaryDirectory(prefix="pdf2epub-") as tmp:
+        markdown = run_marker(list(outputs), tools, tmp) if technical else {}
+        for i, (pdf, out) in enumerate(outputs.items(), 1):
+            counter = "" if single else f"[{i}/{len(outputs)}] "
+            print(f"{counter}Converting {pdf.name}...")
+            try:
+                if technical:
+                    build_technical_epub(pdf, markdown[pdf], out, tools)
+                else:
+                    convert_prose(pdf, out, tools, strip_page_numbers)
+            except ConversionError as e:
+                failed.append(pdf)
+                print(f"  {e}")
+                continue
+            print(f"  done -> {out}")
+            if check:
+                print(f"  {validate(out, epubcheck)}")
 
     if failed:
         print(f"\n{len(failed)} of {len(outputs)} failed: " + ", ".join(p.name for p in failed))
