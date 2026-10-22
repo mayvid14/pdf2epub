@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 .venv/
+.venv-marker/
 
 # Books and conversion output
 *.pdf

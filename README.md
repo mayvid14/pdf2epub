@@ -12,11 +12,38 @@ You need Python 3.10 or newer. Install only what you need.
 | | Windows (PowerShell) | macOS (Terminal, with [Homebrew](https://brew.sh)) |
 |---|---|---|
 | Prose books | `winget install calibre.calibre` | `brew install --cask calibre` |
-| Technical books | `winget install JohnMacFarlane.Pandoc`, then `pip install marker-pdf` | `brew install pandoc`, then `pip3 install marker-pdf` |
+| Technical books | `winget install JohnMacFarlane.Pandoc`, then install Marker (below) | `brew install pandoc python@3.12`, then install Marker (below) |
 | Validation (optional) | `winget install EclipseAdoptium.Temurin.21.JRE`, then put `epubcheck.jar` from [epubcheck releases](https://github.com/w3c/epubcheck/releases) in an `epubcheck` folder next to `pdf2epub.py` | `brew install epubcheck` |
 
-The first technical conversion downloads Marker's models (a few GB). Marker uses an NVIDIA GPU or Apple Silicon if
-one is available. Otherwise it runs on the CPU, which is slower.
+### Installing Marker
+
+Marker needs Python 3.10–3.13; it does not install on 3.14 yet. It also pulls in PyTorch, which is several GB. To
+keep it out of your main Python, install it into its own `.venv-marker` folder inside `pdf2epub`, where the app
+finds it automatically. Run these commands inside the `pdf2epub` folder.
+
+Use Marker 1.x (`marker-pdf<2`). Marker 2.0 needs Docker or a separate llama.cpp server to run its models, while
+1.x runs them directly in Python.
+
+Windows (PowerShell):
+
+```
+py install 3.12
+py -V:3.12 -m venv .venv-marker
+.venv-marker\Scripts\pip install "marker-pdf<2"
+```
+
+macOS:
+
+```
+python3.12 -m venv .venv-marker
+.venv-marker/bin/pip install 'marker-pdf<2'
+```
+
+> **Technical conversions are slow.** Marker runs AI models on your computer. On the CPU, which is the default on
+> Windows, a long book can take **an hour or more**, and pdf2epub shows no progress while Marker runs; leave the
+> window open. The first run also downloads about 3 GB of models. Prose books through Calibre take seconds.
+
+Marker uses Apple Silicon automatically. On Windows, the default PyTorch runs on the CPU only.
 
 On macOS, run `chmod +x pdf2epub.command` once so you can double-click the launcher.
 

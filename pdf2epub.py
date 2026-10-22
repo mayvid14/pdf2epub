@@ -42,7 +42,12 @@ FALLBACKS = {
 INSTALL_HINTS = {
     "ebook-convert": ("winget install calibre.calibre", "brew install --cask calibre"),
     "pandoc": ("winget install JohnMacFarlane.Pandoc", "brew install pandoc"),
-    "marker_single": ("pip install marker-pdf", "pip3 install marker-pdf"),
+    "marker_single": (
+        "py install 3.12; py -V:3.12 -m venv .venv-marker; "
+        ".venv-marker\\Scripts\\pip install \"marker-pdf<2\"   (run in the pdf2epub folder)",
+        "python3.12 -m venv .venv-marker && .venv-marker/bin/pip install 'marker-pdf<2'"
+        "   (run in the pdf2epub folder)",
+    ),
 }
 
 # Calibre treats short paragraphs like "Chapter 3", "PART ONE" or the spaced-out
@@ -107,9 +112,12 @@ def find_tool(name):
     if found:
         return found
     candidates = list(FALLBACKS.get(name, []))
-    scripts = sysconfig.get_path("scripts")  # where pip puts marker_single
+    exe = name + (".exe" if IS_WIN else "")
+    # Marker's own venv next to this script (see README), then this Python's scripts.
+    candidates.append(str(HERE / ".venv-marker" / ("Scripts" if IS_WIN else "bin") / exe))
+    scripts = sysconfig.get_path("scripts")
     if scripts:
-        candidates.append(os.path.join(scripts, name + (".exe" if IS_WIN else "")))
+        candidates.append(os.path.join(scripts, exe))
     return next((c for c in candidates if os.path.isfile(c)), None)
 
 
@@ -168,7 +176,7 @@ def convert_prose(pdf, out, tools, strip_page_numbers):
 
 def convert_technical(pdf, out, tools):
     with tempfile.TemporaryDirectory(prefix="pdf2epub-") as tmp:
-        print("  Running Marker (the first run downloads its models; this can take a while)...")
+        print("  Running Marker; this can take a long time. Leave this window open...")
         run([tools["marker_single"], str(pdf), "--output_dir", tmp], "Marker")
         markdown = sorted(Path(tmp).rglob("*.md"))
         if not markdown:
@@ -241,6 +249,10 @@ def convert_batch(source):
                        if single else "Are these technical books (tables, math, code)?",
                        False)
     tools = require(["marker_single", "pandoc"] if technical else ["ebook-convert"])
+    if technical:
+        print("  Note: technical books are converted by AI models running on this computer.\n"
+              "  Without a supported GPU this is slow: a long book can take an hour or more,\n"
+              "  with no progress shown. The first run also downloads about 3 GB of models.")
     strip_page_numbers = False if technical else ask_yn("Remove stray page numbers?", True)
     outputs = choose_outputs(pdfs, single)
 
