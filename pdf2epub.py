@@ -45,10 +45,11 @@ INSTALL_HINTS = {
     "marker_single": ("pip install marker-pdf", "pip3 install marker-pdf"),
 }
 
-# Calibre treats short paragraphs like "Chapter 3" or "PART ONE" as chapter starts.
+# Calibre treats short paragraphs like "Chapter 3", "PART ONE" or the spaced-out
+# "C H A P T E R - 1" as chapter starts, and builds the table of contents from them.
 CHAPTER_XPATH = (
     "//*[(name()='h1' or name()='h2' or name()='p') and string-length(.) < 60 and "
-    "re:test(., '^\\s*(chapter|part|book|prologue|epilogue)\\b', 'i')]"
+    "re:test(., '^\\s*(c\\s?h\\s?a\\s?p\\s?t\\s?e\\s?r|part|book|prologue|epilogue)\\b', 'i')]"
 )
 # A paragraph that contains nothing but a page number ("12", "Page 12", "12 of 300").
 PAGE_NUMBER_REGEX = (
@@ -152,11 +153,13 @@ def convert_prose(pdf, out, tools, strip_page_numbers):
     cmd = [
         tools["ebook-convert"], str(pdf), str(out),
         "--epub-version", "3",
-        "--enable-heuristic-processing",
-        "--unwrap-lines",
+        "--enable-heuristics",  # includes line unwrapping and dehyphenation
         "--html-unwrap-factor", "0.45",
         "--chapter", CHAPTER_XPATH,
         "--chapter-mark", "pagebreak",
+        "--level1-toc", CHAPTER_XPATH,
+        # PDF title fields are often junk ("Microsoft Word - draft3.doc"); the file name is better.
+        "--title", pdf.stem,
     ]
     if strip_page_numbers:
         cmd += ["--sr1-search", PAGE_NUMBER_REGEX, "--sr1-replace", ""]
